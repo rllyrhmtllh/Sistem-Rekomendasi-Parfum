@@ -22,6 +22,7 @@ def get_product_image_url(product_url: str) -> str:
     try:
         resp = requests.get(product_url, headers=HEADERS, timeout=6)
         if resp.status_code != 200:
+            print(f"[IMG ERROR] Status {resp.status_code} untuk {product_url}")
             return PLACEHOLDER_IMAGE
  
         soup = BeautifulSoup(resp.text, "html.parser")
