@@ -35,5 +35,6 @@ def get_product_image_url(product_url: str) -> str:
             return img_tag["src"]
  
         return PLACEHOLDER_IMAGE
-    except Exception:
+    except Exception as e:
+        print(f"Gagal ambil gambar dari {product_url}: {e}")
         return PLACEHOLDER_IMAGE
