@@ -41,6 +41,36 @@ def load_artifacts():
 
 DISPLAY_COLS = ["Perfume", "Brand", "Gender", "mainaccord1", "mainaccord2", "url", "Rating Value"]
 
+# Skor similarity minimum agar sebuah hasil dianggap benar-benar relevan.
+# Kalau similarity tertinggi dari seluruh kandidat berada di bawah ambang ini,
+# artinya query tidak punya kemiripan nyata dengan parfum manapun di dataset
+# (mis. input random/tidak relevan seperti "tai kucing"), sehingga fungsi
+# rekomendasi berbasis preferensi akan mengembalikan None alih-alih tetap
+# memaksakan top_n hasil dengan skor mendekati nol.
+MIN_PREFERENCE_SIMILARITY = 0.08
+
+
+def has_vocabulary_overlap(query_clean: str, tfidf_vectorizer) -> bool:
+    """Cek apakah token hasil preprocessing query punya overlap dengan vocabulary TF-IDF.
+
+    Vocabulary TF-IDF dibangun dari notes/deskripsi parfum asli, sehingga ini
+    dipakai sebagai sinyal awal murah untuk menolak input yang sama sekali
+    tidak berhubungan dengan istilah aroma (mis. kata acak, bahasa lain yang
+    tidak relevan, atau typo total) sebelum masuk ke perhitungan similarity.
+    """
+    if tfidf_vectorizer is None:
+        return True
+
+    tokens = [t for t in query_clean.split() if t]
+    if not tokens:
+        return False
+
+    vocabulary = getattr(tfidf_vectorizer, "vocabulary_", None)
+    if not vocabulary:
+        return True  # fail-open kalau vectorizer belum ter-fit dengan benar
+
+    return any(token in vocabulary for token in tokens)
+
 
 def get_similar_perfumes(perfume_name, feature_matrix, df, top_n=10, is_sparse=True, brand=None):
     """Rekomendasi item-based: parfum lain yang mirip dengan 1 parfum acuan."""
@@ -86,6 +116,11 @@ def recommend_by_preference(
     """
     query_clean = preprocess_text(favorite_notes)
 
+    # Query yang sama sekali tidak mengandung istilah aroma (mis. kata acak/tidak
+    # relevan) ditolak lebih awal, tanpa perlu menjalankan similarity SBERT/TF-IDF.
+    if tfidf_vectorizer is not None and not has_vocabulary_overlap(query_clean, tfidf_vectorizer):
+        return None
+
     if sbert_model is not None and sbert_embeddings is not None:
         query_vec = sbert_model.encode([query_clean])
         sims = cosine_similarity(query_vec, sbert_embeddings).flatten()
@@ -94,6 +129,9 @@ def recommend_by_preference(
         sims = cosine_similarity(query_vec, tfidf_matrix).flatten()
     else:
         raise ValueError("Tidak ada metode similarity yang tersedia untuk rekomendasi preferensi.")
+
+    if sims.size == 0 or sims.max() < MIN_PREFERENCE_SIMILARITY:
+        return None
 
     candidate_df = df.copy()
     candidate_df["similarity_score"] = sims
@@ -109,8 +147,17 @@ def recommend_by_preference(
 def recommend_hybrid(favorite_notes, tfidf_vectorizer, tfidf_matrix, df, gender_filter=None, top_n=10, alpha=0.7):
     """Rekomendasi hybrid: kemiripan konten (TF-IDF) dikombinasikan dengan weighted rating."""
     query_clean = preprocess_text(favorite_notes)
+
+    # Query yang sama sekali tidak mengandung istilah aroma (mis. kata acak/tidak
+    # relevan) ditolak lebih awal, tanpa perlu menjalankan similarity TF-IDF.
+    if not has_vocabulary_overlap(query_clean, tfidf_vectorizer):
+        return None
+
     query_vec = tfidf_vectorizer.transform([query_clean])
     sims = cosine_similarity(query_vec, tfidf_matrix).flatten()
+
+    if sims.size == 0 or sims.max() < MIN_PREFERENCE_SIMILARITY:
+        return None
 
     candidate_df = df.copy()
     candidate_df["similarity_score"] = sims

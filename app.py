@@ -9,6 +9,7 @@ from sentence_transformers import SentenceTransformer
 
 from recommender import (
     get_similar_perfumes,
+    has_vocabulary_overlap,
     load_artifacts,
     preprocess_text,
     recommend_by_preference,
@@ -382,7 +383,7 @@ def init_session_state():
             st.session_state[key] = value
 
 
-def validate_user_query(query: str):
+def validate_user_query(query: str, tfidf_vectorizer=None):
     text = str(query or "").strip()
     if not text:
         return False, "Masukkan deskripsi aroma terlebih dahulu."
@@ -395,6 +396,17 @@ def validate_user_query(query: str):
     short_token_ratio = sum(1 for token in tokens if len(token) < 3) / len(tokens)
     if short_token_ratio >= 0.6:
         return False, "Deskripsi aroma kurang jelas. Coba gunakan kata seperti vanilla, citrus, oud, rose, woody, atau musk."
+
+    # Panjang token & rasio token pendek tidak cukup untuk menyaring input yang
+    # sama sekali tidak berhubungan dengan aroma (mis. "tai kucing" tetap lolos
+    # dua pengecekan di atas). Di sinilah dicek apakah setidaknya satu kata
+    # benar-benar dikenali sebagai istilah aroma di vocabulary TF-IDF, yang
+    # dibangun dari notes parfum asli pada dataset.
+    if tfidf_vectorizer is not None and not has_vocabulary_overlap(normalized, tfidf_vectorizer):
+        return False, (
+            "Deskripsi aroma tidak dikenali sistem. Coba gunakan istilah aroma yang lebih umum, "
+            "misalnya vanilla, citrus, oud, rose, woody, musk, amber, atau floral."
+        )
 
     return True, ""
 
@@ -795,7 +807,7 @@ def render_search_page(
             submitted = st.form_submit_button("Cari Rekomendasi", type="primary")
 
         if submitted:
-            is_valid, message = validate_user_query(query)
+            is_valid, message = validate_user_query(query, tfidf_vectorizer=tfidf_vectorizer)
             if not is_valid:
                 st.warning(message)
                 st.session_state.preference_result = None
@@ -825,9 +837,18 @@ def render_search_page(
                         )
                         score_col = "similarity_score"
 
-                st.session_state.preference_result = result
-                st.session_state.preference_query = query
-                st.session_state.preference_score_col = score_col
+                if result is None or len(result) == 0:
+                    st.warning(
+                        "Tidak ditemukan parfum yang relevan dengan deskripsi tersebut. "
+                        "Coba gunakan istilah aroma yang lebih umum, misalnya vanilla, citrus, oud, "
+                        "rose, woody, musk, amber, atau floral."
+                    )
+                    st.session_state.preference_result = None
+                    st.session_state.preference_query = query
+                else:
+                    st.session_state.preference_result = result
+                    st.session_state.preference_query = query
+                    st.session_state.preference_score_col = score_col
 
         if st.session_state.preference_result is not None:
             st.markdown(
