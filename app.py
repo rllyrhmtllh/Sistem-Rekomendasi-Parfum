@@ -733,7 +733,7 @@ def render_search_page(
     with tab1:
         st.markdown('<div class="section-title">Temukan Parfum yang Mirip</div>', unsafe_allow_html=True)
         st.markdown(
-            '<p class="section-copy">Pilih satu parfum favoritmu, lalu sistem akan mencarikan parfum lain dengan karakteristik yang serupa.</p>',
+            '<p class="section-copy">Pilih satu parfum favoritmu, lalu sistem akan mencarikan parfum lain dengan karakteristik yang serupa dari seluruh katalog.</p>',
             unsafe_allow_html=True,
         )
 
@@ -743,7 +743,17 @@ def render_search_page(
             with col_a:
                 selected_label = st.selectbox("Pilih parfum", dropdown_labels, index=0)
             with col_b:
-                method = st.radio("Metode", ["Sentence-BERT", "TF-IDF"], index=0, horizontal=True)
+                method = st.radio(
+                    "Metode",
+                    ["TF-IDF", "Sentence-BERT"],
+                    index=0,
+                    horizontal=True,
+                    help=(
+                        "TF-IDF dipilih sebagai default karena secara konsisten memberi hasil "
+                        "lebih relevan (Precision@10 & nDCG@10 lebih tinggi) dibanding Sentence-BERT "
+                        "pada evaluasi notebook. Sentence-BERT tetap tersedia sebagai opsi."
+                    ),
+                )
             submitted = st.form_submit_button("Cari Rekomendasi", type="primary")
 
         if submitted:
@@ -758,6 +768,7 @@ def render_search_page(
                         top_n=top_n,
                         is_sparse=True,
                         brand=selected_brand,
+                        restrict_candidates_to_brand=False,
                     )
                 else:
                     result = get_similar_perfumes(
@@ -767,6 +778,7 @@ def render_search_page(
                         top_n=top_n,
                         is_sparse=False,
                         brand=selected_brand,
+                        restrict_candidates_to_brand=False,
                     )
 
                 if gender_filter != "Semua" and result is not None:
@@ -795,14 +807,18 @@ def render_search_page(
                 placeholder="mis. vanilla amber citrus sweet",
             )
             use_hybrid = st.toggle("Gunakan hybrid: gabungan kemiripan dan rating", value=True)
-            alpha = 0.7
+            alpha = 0.9
             if use_hybrid:
                 alpha = st.slider(
                     "Bobot kemiripan konten (alpha)",
                     min_value=0.0,
                     max_value=1.0,
-                    value=0.7,
+                    value=0.9,
                     step=0.1,
+                    help=(
+                        "Default 0.9 mengikuti alpha terbaik (berdasarkan nDCG@10) dari "
+                        "sensitivity analysis pada skema evaluasi 90:10 di notebook."
+                    ),
                 )
             submitted = st.form_submit_button("Cari Rekomendasi", type="primary")
 
@@ -908,7 +924,9 @@ def render_search_page(
 
             **4. Mode Rekomendasi**
             - **Item-based** (*"Cari Berdasarkan Parfum"*): mencari parfum lain paling mirip dengan satu parfum
-              acuan, via TF-IDF atau Sentence-BERT, dengan opsi filter brand & gender.
+              acuan dari seluruh katalog, via TF-IDF atau Sentence-BERT, dengan filter gender. Parfum acuan
+              diidentifikasi lewat kombinasi nama + brand (bukan nama saja) agar tidak salah acuan pada nama
+              parfum yang dipakai lebih dari satu brand.
             - **Preference-based** (*"Berdasarkan Preferensi Aroma"*): menerima deskripsi aroma bebas dari
               pengguna, dicocokkan lewat Sentence-BERT (fallback otomatis ke TF-IDF bila SBERT tidak tersedia
               karena keterbatasan memori server).
@@ -943,9 +961,10 @@ def render_search_page(
             - **Recall@10 sengaja tidak dijadikan acuan utama** — nilainya kecil (≈0.001) bukan karena model
               buruk, melainkan karena katalog train berjumlah puluhan ribu item sedangkan K hanya 10, sehingga
               Precision@10 dan nDCG@10 lebih representatif untuk skema evaluasi ini.
-            - Pencarian nilai `alpha` terbaik (berdasarkan nDCG@10) untuk skema 90:10 menghasilkan **alpha = 0.9**,
-              sedangkan slider `alpha` di aplikasi ini memakai nilai default **0.7**. Pengguna tetap bisa
-              mengatur slider tersebut secara manual bila ingin mereplikasi hasil eksperimen paling optimal.
+            - Pencarian nilai `alpha` terbaik (berdasarkan nDCG@10) untuk skema 90:10 menghasilkan **alpha = 0.9**.
+              Nilai ini dipakai sebagai default slider `alpha` di aplikasi ini, sehingga hasil rekomendasi hybrid
+              secara default sejalan dengan konfigurasi yang dievaluasi. Pengguna tetap bisa mengatur slider
+              secara manual untuk mengeksplorasi bobot kemiripan vs rating yang lain.
             """
         )
 

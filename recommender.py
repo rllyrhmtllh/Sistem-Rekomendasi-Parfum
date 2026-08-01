@@ -72,20 +72,50 @@ def has_vocabulary_overlap(query_clean: str, tfidf_vectorizer) -> bool:
     return any(token in vocabulary for token in tokens)
 
 
-def get_similar_perfumes(perfume_name, feature_matrix, df, top_n=10, is_sparse=True, brand=None):
-    """Rekomendasi item-based: parfum lain yang mirip dengan 1 parfum acuan."""
-    candidate_df = df.copy()
+def get_similar_perfumes(
+    perfume_name,
+    feature_matrix,
+    df,
+    top_n=10,
+    is_sparse=True,
+    brand=None,
+    restrict_candidates_to_brand=False,
+):
+    """Rekomendasi item-based: parfum lain yang mirip dengan 1 parfum acuan.
 
+    `Perfume` tidak unik di seluruh dataset (banyak brand memakai nama yang sama,
+    mis. "amber queen" ada di beberapa brand berbeda). Karena itu, jika `brand`
+    diberikan, ia SELALU dipakai untuk mengidentifikasi baris parfum acuan yang
+    benar (Perfume + Brand) -- terlepas dari apakah `restrict_candidates_to_brand`
+    aktif. Tanpa ini, `perfume_name` yang ambigu bisa membuat fungsi diam-diam
+    mengambil baris dari brand yang salah sebagai acuan, sehingga rekomendasi
+    yang dihasilkan tidak relevan dengan parfum yang sebenarnya dipilih user.
+
+    `restrict_candidates_to_brand` mengontrol hal yang berbeda: apakah kandidat
+    hasil rekomendasi dibatasi hanya ke brand yang sama dengan acuan, atau
+    mencakup seluruh katalog (default).
+    """
     if brand is not None:
-        candidate_df = candidate_df[
-            candidate_df["Brand"].astype(str).str.strip().str.lower() == str(brand).strip().lower()
-        ].copy()
+        brand_norm = str(brand).strip().lower()
+        ref_matches = df.index[
+            (df["Perfume"] == perfume_name)
+            & (df["Brand"].astype(str).str.strip().str.lower() == brand_norm)
+        ]
+    else:
+        brand_norm = None
+        ref_matches = df.index[df["Perfume"] == perfume_name]
 
-    matches = candidate_df.index[candidate_df["Perfume"] == perfume_name]
-    if len(matches) == 0:
+    if len(ref_matches) == 0:
         return None
 
-    idx = matches[0]
+    idx = ref_matches[0]
+
+    candidate_df = df.copy()
+    if restrict_candidates_to_brand and brand_norm is not None:
+        candidate_df = candidate_df[
+            candidate_df["Brand"].astype(str).str.strip().str.lower() == brand_norm
+        ].copy()
+
     candidate_idx = candidate_df.index.tolist()
     query_vec = feature_matrix[idx] if is_sparse else feature_matrix[idx].reshape(1, -1)
     sims = cosine_similarity(query_vec, feature_matrix[candidate_idx]).flatten()
