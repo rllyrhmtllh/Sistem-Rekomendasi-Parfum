@@ -79,6 +79,7 @@ def get_similar_perfumes(
     is_sparse=True,
     brand=None,
     restrict_candidates_to_brand=False,
+    include_selected=False,
 ):
     """Rekomendasi item-based: parfum lain yang mirip dengan 1 parfum acuan.
 
@@ -119,8 +120,13 @@ def get_similar_perfumes(
     query_vec = feature_matrix[idx] if is_sparse else feature_matrix[idx].reshape(1, -1)
     sims = cosine_similarity(query_vec, feature_matrix[candidate_idx]).flatten()
 
-    top_idx = sims.argsort()[::-1]
-    top_idx = [candidate_idx[i] for i in top_idx if candidate_idx[i] != idx][:top_n]
+    ordered_idx = [candidate_idx[i] for i in sims.argsort()[::-1]]
+    if include_selected:
+        if idx in ordered_idx:
+            ordered_idx.remove(idx)
+        top_idx = [idx] + ordered_idx[: max(0, top_n - 1)]
+    else:
+        top_idx = [candidate_idx[i] for i in sims.argsort()[::-1] if candidate_idx[i] != idx][:top_n]
 
     cols = [c for c in DISPLAY_COLS if c in df.columns]
     result = df.iloc[top_idx][cols].copy()

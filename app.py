@@ -722,7 +722,7 @@ def render_search_page(
     with tab1:
         st.markdown('<div class="section-title">Temukan Parfum yang Mirip</div>', unsafe_allow_html=True)
         st.markdown(
-            '<p class="section-copy">Pilih satu parfum favoritmu, lalu sistem akan mencarikan parfum lain dengan karakteristik yang serupa dari seluruh katalog.</p>',
+            '<p class="section-copy">Pilih satu parfum favoritmu, lalu sistem akan menampilkan parfum terpilih dan parfum lain dengan karakteristik yang serupa dari seluruh katalog.</p>',
             unsafe_allow_html=True,
         )
 
@@ -745,6 +745,7 @@ def render_search_page(
                     is_sparse=True,
                     brand=selected_brand,
                     restrict_candidates_to_brand=False,
+                    include_selected=True,
                 )
 
                 if gender_filter != "Semua" and result is not None:
