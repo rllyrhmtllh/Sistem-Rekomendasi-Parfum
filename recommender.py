@@ -17,7 +17,7 @@ def preprocess_text(text: str) -> str:
 
 
 def load_artifacts():
-    """Load dataframe bersih & feature cache (tfidf, sbert) hasil prepare_data.py."""
+    """Load dataframe bersih & feature cache TF-IDF hasil prepare_data.py."""
     df_path = os.path.join(DATA_DIR, "df_clean.pkl")
     features_path = os.path.join(DATA_DIR, "features_cache.pkl")
 
@@ -34,9 +34,8 @@ def load_artifacts():
 
     tfidf_vectorizer = cache["tfidf_vectorizer"]
     tfidf_matrix = cache["tfidf_matrix"]
-    sbert_embeddings = cache["sbert_embeddings"]
 
-    return df, tfidf_vectorizer, tfidf_matrix, sbert_embeddings
+    return df, tfidf_vectorizer, tfidf_matrix
 
 
 DISPLAY_COLS = ["Perfume", "Brand", "Gender", "mainaccord1", "mainaccord2", "url", "Rating Value"]
@@ -131,8 +130,6 @@ def get_similar_perfumes(
 
 def recommend_by_preference(
     favorite_notes,
-    sbert_model,
-    sbert_embeddings,
     df,
     gender_filter=None,
     top_n=10,
@@ -141,20 +138,16 @@ def recommend_by_preference(
 ):
     """Rekomendasi berbasis deskripsi bebas preferensi aroma (mis. 'vanilla amber citrus').
 
-    Jika model SBERT tidak tersedia karena keterbatasan memori, fungsi ini otomatis fall back
-    ke TF-IDF agar rekomendasi tetap dapat dijalankan.
+    Fungsi ini menggunakan TF-IDF untuk mencocokkan query dengan deskripsi parfum.
     """
     query_clean = preprocess_text(favorite_notes)
 
     # Query yang sama sekali tidak mengandung istilah aroma (mis. kata acak/tidak
-    # relevan) ditolak lebih awal, tanpa perlu menjalankan similarity SBERT/TF-IDF.
+    # relevan) ditolak lebih awal, tanpa perlu menjalankan perhitungan similarity.
     if tfidf_vectorizer is not None and not has_vocabulary_overlap(query_clean, tfidf_vectorizer):
         return None
 
-    if sbert_model is not None and sbert_embeddings is not None:
-        query_vec = sbert_model.encode([query_clean])
-        sims = cosine_similarity(query_vec, sbert_embeddings).flatten()
-    elif tfidf_vectorizer is not None and tfidf_matrix is not None:
+    if tfidf_vectorizer is not None and tfidf_matrix is not None:
         query_vec = tfidf_vectorizer.transform([query_clean])
         sims = cosine_similarity(query_vec, tfidf_matrix).flatten()
     else:

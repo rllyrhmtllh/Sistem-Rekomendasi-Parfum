@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from sentence_transformers import SentenceTransformer
 
 from recommender import (
     get_similar_perfumes,
@@ -347,16 +346,8 @@ st.markdown(
 
 @st.cache_resource(show_spinner="Memuat data dan indeks, mohon tunggu...")
 def get_resources():
-    df, tfidf_vectorizer, tfidf_matrix, sbert_embeddings = load_artifacts()
-    return df, tfidf_vectorizer, tfidf_matrix, sbert_embeddings
-
-
-@st.cache_resource(show_spinner="Memuat model semantic jika tersedia...")
-def get_sbert_model():
-    try:
-        return SentenceTransformer("all-MiniLM-L6-v2")
-    except Exception:
-        return None
+    df, tfidf_vectorizer, tfidf_matrix = load_artifacts()
+    return df, tfidf_vectorizer, tfidf_matrix
 
 
 @st.cache_data(show_spinner=False)
@@ -452,7 +443,7 @@ def render_hero(active_page: str):
             <div class="hero-eyebrow">{eyebrow}</div>
             <h1>Sistem Rekomendasi Parfum</h1>
             <p>
-                Content-Based dan Hybrid Filtering menggunakan TF-IDF, Sentence-BERT (SBERT),
+                Content-Based dan Hybrid Filtering menggunakan TF-IDF
                 dan weighted rating, dibangun dari dataset Fragrantica.com.
                 {description}
             </p>
@@ -708,8 +699,6 @@ def render_search_page(
     df: pd.DataFrame,
     tfidf_vectorizer,
     tfidf_matrix,
-    sbert_embeddings,
-    sbert_model,
     gender_filter: str,
     top_n: int,
 ):
@@ -742,44 +731,21 @@ def render_search_page(
             col_a, col_b = st.columns([3, 1])
             with col_a:
                 selected_label = st.selectbox("Pilih parfum", dropdown_labels, index=0)
-            with col_b:
-                method = st.radio(
-                    "Metode",
-                    ["TF-IDF", "Sentence-BERT"],
-                    index=0,
-                    horizontal=True,
-                    help=(
-                        "TF-IDF dipilih sebagai default karena secara konsisten memberi hasil "
-                        "lebih relevan (Precision@10 & nDCG@10 lebih tinggi) dibanding Sentence-BERT "
-                        "pada evaluasi notebook. Sentence-BERT tetap tersedia sebagai opsi."
-                    ),
-                )
             submitted = st.form_submit_button("Cari Rekomendasi", type="primary")
 
         if submitted:
             selected_brand = label_to_selection[selected_label]["Brand"]
             selected_perfume = label_to_selection[selected_label]["Perfume"]
             with st.spinner("Menghitung kemiripan parfum..."):
-                if method == "TF-IDF":
-                    result = get_similar_perfumes(
-                        selected_perfume,
-                        tfidf_matrix,
-                        df,
-                        top_n=top_n,
-                        is_sparse=True,
-                        brand=selected_brand,
-                        restrict_candidates_to_brand=False,
-                    )
-                else:
-                    result = get_similar_perfumes(
-                        selected_perfume,
-                        sbert_embeddings,
-                        df,
-                        top_n=top_n,
-                        is_sparse=False,
-                        brand=selected_brand,
-                        restrict_candidates_to_brand=False,
-                    )
+                result = get_similar_perfumes(
+                    selected_perfume,
+                    tfidf_matrix,
+                    df,
+                    top_n=top_n,
+                    is_sparse=True,
+                    brand=selected_brand,
+                    restrict_candidates_to_brand=False,
+                )
 
                 if gender_filter != "Semua" and result is not None:
                     result = result[result["Gender"] == gender_filter].reset_index(drop=True)
@@ -806,20 +772,6 @@ def render_search_page(
                 "Deskripsi preferensi aroma",
                 placeholder="mis. vanilla amber citrus sweet",
             )
-            use_hybrid = st.toggle("Gunakan hybrid: gabungan kemiripan dan rating", value=True)
-            alpha = 0.9
-            if use_hybrid:
-                alpha = st.slider(
-                    "Bobot kemiripan konten (alpha)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.9,
-                    step=0.1,
-                    help=(
-                        "Default 0.9 mengikuti alpha terbaik (berdasarkan nDCG@10) dari "
-                        "sensitivity analysis pada skema evaluasi 90:10 di notebook."
-                    ),
-                )
             submitted = st.form_submit_button("Cari Rekomendasi", type="primary")
 
         if submitted:
@@ -829,29 +781,15 @@ def render_search_page(
                 st.session_state.preference_result = None
             else:
                 with st.spinner("Mencari parfum yang sesuai..."):
-                    if use_hybrid:
-                        result = recommend_hybrid(
-                            query,
-                            tfidf_vectorizer,
-                            tfidf_matrix,
-                            df,
-                            gender_filter=gender_filter,
-                            top_n=top_n,
-                            alpha=alpha,
-                        )
-                        score_col = "hybrid_score"
-                    else:
-                        result = recommend_by_preference(
-                            query,
-                            sbert_model,
-                            sbert_embeddings,
-                            df,
-                            gender_filter=gender_filter,
-                            top_n=top_n,
-                            tfidf_vectorizer=tfidf_vectorizer,
-                            tfidf_matrix=tfidf_matrix,
-                        )
-                        score_col = "similarity_score"
+                    result = recommend_by_preference(
+                        query,
+                        df,
+                        gender_filter=gender_filter,
+                        top_n=top_n,
+                        tfidf_vectorizer=tfidf_vectorizer,
+                        tfidf_matrix=tfidf_matrix,
+                    )
+                    score_col = "similarity_score"
 
                 if result is None or len(result) == 0:
                     st.warning(
@@ -899,55 +837,56 @@ def render_search_page(
             - Baris duplikat (berdasarkan URL ternormalisasi) dan baris tanpa `Perfume`/`Brand` dibuang.
             - Notes `Top`, `Middle`, `Base` digabung menjadi `combined_notes`, lalu dibersihkan (huruf kecil,
               hanya karakter alfabet) untuk dipakai TF-IDF.
-            - Kalimat deskripsi yang membocorkan kategori aroma (pola *"is a(n) ... fragrance"*) dinetralkan
-              sebelum deskripsi dipakai sebagai input Sentence-BERT, supaya model tidak "curang" mengandalkan
-              kalimat yang menyebutkan label kategorinya sendiri.
+        - Kalimat deskripsi yang membocorkan kategori aroma (pola *"is a(n) ... fragrance"*) dinetralkan.
 
-            **2. Feature Engineering**
-            - **TF-IDF**: `stop_words="english"`, `max_features=8000`, `min_df=3`, `max_df=0.85`,
-              `ngram_range=(1, 2)`, `sublinear_tf=True` — dilatih pada notes parfum (`combined_notes_clean`).
-            - **Sentence-BERT** (`all-MiniLM-L6-v2`): encode deskripsi parfum yang sudah dibersihkan dari
-              kebocoran kategori.
-            - Reduksi dimensi TF-IDF (TruncatedSVD/LSA) sempat diuji di tahap eksperimen notebook, namun versi
-              yang dipakai aplikasi ini adalah TF-IDF & embedding SBERT mentah (tanpa reduksi), sesuai isi
-              `features_cache.pkl` yang di-*load* aplikasi.
+        **2. Feature Engineering**
+        - **TF-IDF**: `stop_words="english"`, `max_features=8000`, `min_df=3`, `max_df=0.85`,
+          `ngram_range=(1, 2)`, `sublinear_tf=True` — dilatih pada notes parfum (`combined_notes_clean`).
+        - Reduksi dimensi TF-IDF (TruncatedSVD/LSA) sempat diuji di tahap eksperimen notebook, namun versi
+          yang dipakai aplikasi ini adalah TF-IDF mentah, sesuai isi `features_cache.pkl` yang di-*load* aplikasi.
 
-            **3. Skema Evaluasi (Train-Test Split Level Item)**
-            - Karena sistem ini *content-based* tanpa data interaksi user-item, evaluasi dilakukan dengan
-              membagi katalog parfum menjadi data **train** (katalog) dan **test** (dianggap parfum yang belum
-              pernah dilihat/*unseen items*, dipakai sebagai query) pada 4 rasio: **90:10, 80:20, 70:30, 60:40**.
-            - Relevansi didefinisikan sebagai kemiripan minimal 2 *main accord* antara parfum query dan parfum
-              kandidat di katalog train.
-            - **Catalog produksi**: skema ini murni untuk mengukur generalisasi model secara *offline*. Untuk
-              deployment, katalog train dan test dari skema **90:10** digabungkan kembali sehingga seluruh data
-              tersedia sebagai katalog pencarian di aplikasi ini (bukan hanya sebagian).
+        **3. Skema Evaluasi (Train-Test Split Level Item)**
+        - Karena sistem ini *content-based* tanpa data interaksi user-item, evaluasi dilakukan dengan
+          membagi katalog parfum menjadi data **train** (katalog) dan **test** (dianggap parfum yang belum
+          pernah dilihat/*unseen items*, dipakai sebagai query) pada 4 rasio: **90:10, 80:20, 70:30, 60:40**.
+        - Relevansi didefinisikan sebagai kemiripan minimal 2 *main accord* antara parfum query dan parfum
+          kandidat di katalog train.
+        - **Catalog produksi**: skema ini murni untuk mengukur generalisasi model secara *offline*. Untuk
+          deployment, katalog train dan test dari skema **90:10** digabungkan kembali sehingga seluruh data
+          tersedia sebagai katalog pencarian di aplikasi ini (bukan hanya sebagian).
 
-            **4. Mode Rekomendasi**
-            - **Item-based** (*"Cari Berdasarkan Parfum"*): mencari parfum lain paling mirip dengan satu parfum
-              acuan dari seluruh katalog, via TF-IDF atau Sentence-BERT, dengan filter gender. Parfum acuan
-              diidentifikasi lewat kombinasi nama + brand (bukan nama saja) agar tidak salah acuan pada nama
-              parfum yang dipakai lebih dari satu brand.
-            - **Preference-based** (*"Berdasarkan Preferensi Aroma"*): menerima deskripsi aroma bebas dari
-              pengguna, dicocokkan lewat Sentence-BERT (fallback otomatis ke TF-IDF bila SBERT tidak tersedia
-              karena keterbatasan memori server).
-            - **Hybrid**: skor kemiripan konten (TF-IDF) digabung dengan *weighted rating* — rumus mirip
-              *Bayesian average* (`Rating Value` & `Rating Count`, kuantil rating 0.70) — lewat parameter
-              `alpha` yang bisa diatur pengguna (`skor = alpha × similarity + (1 − alpha) × weighted_rating`).
-            - **Validasi input**: deskripsi aroma bebas dicek dulu terhadap vocabulary TF-IDF (istilah aroma
-              nyata dari dataset) dan ambang similarity minimum, sehingga input yang tidak relevan sama sekali
-              (mis. kata acak/tidak berhubungan dengan aroma) akan ditolak dengan pesan peringatan, bukan
-              tetap dipaksakan menampilkan rekomendasi.
+        **4. Mode Rekomendasi**
+        - **Item-based** (*"Cari Berdasarkan Parfum"*): mencari parfum lain paling mirip dengan satu parfum
+          acuan dari seluruh katalog menggunakan TF-IDF, dengan filter gender. Parfum acuan
+          diidentifikasi lewat kombinasi nama + brand (bukan nama saja) agar tidak salah acuan pada nama
+          parfum yang dipakai lebih dari satu brand.
+        - **Preference-based** (*"Berdasarkan Preferensi Aroma"*): menerima deskripsi aroma bebas dari
+          pengguna, dicocokkan lewat TF-IDF.
+        - **Hybrid**: skor kemiripan konten (TF-IDF) digabung dengan *weighted rating* — rumus mirip
+          *Bayesian average* (`Rating Value` & `Rating Count`, kuantil rating 0.70) — lewat parameter
+          `alpha` yang bisa diatur pengguna (`skor = alpha × similarity + (1 − alpha) × weighted_rating`).
+        - **Validasi input**: deskripsi aroma bebas dicek dulu terhadap vocabulary TF-IDF (istilah aroma
+          nyata dari dataset) dan ambang similarity minimum, sehingga input yang tidak relevan sama sekali
+          (mis. kata acak/tidak berhubungan dengan aroma) akan ditolak dengan pesan peringatan, bukan
+          tetap dipaksakan menampilkan rekomendasi.
 
-            **5. Hasil Evaluasi (skema 90:10, dasar pemilihan model untuk deployment)**
-            """
+        **5. Hasil Evaluasi (skema 90:10, dasar pemilihan model untuk deployment)**
+        - **Hybrid (TF-IDF + Rating)** sedikit mengungguli TF-IDF murni dan menjadi dasar pemilihan skema
+          90:10 untuk deployment.
+        - **Recall@10 sengaja tidak dijadikan acuan utama** — nilainya kecil (≈0.001) bukan karena model
+          buruk, melainkan karena katalog train berjumlah puluhan ribu item sedangkan K hanya 10, sehingga
+          Precision@10 dan nDCG@10 lebih representatif untuk skema evaluasi ini.
+        - Pencarian nilai `alpha` terbaik (berdasarkan nDCG@10) untuk skema 90:10 menghasilkan **alpha = 0.9**.
+          Nilai ini dipakai sebagai default slider `alpha` di aplikasi ini, sehingga hasil rekomendasi hybrid
+          secara default sejalan dengan konfigurasi yang dievaluasi. Pengguna tetap bisa mengatur slider
+          secara manual untuk mengeksplorasi bobot kemiripan vs rating yang lain.
+        """
         )
 
         eval_90_10 = pd.DataFrame(
             [
                 {"Model": "TF-IDF", "Precision@10": 0.7493, "nDCG@10": 0.7603, "HitRate@10": 1.0000, "BrandDiversity@10": 0.9177},
-                {"Model": "Sentence-BERT", "Precision@10": 0.5573, "nDCG@10": 0.5732, "HitRate@10": 0.9800, "BrandDiversity@10": 0.6107},
                 {"Model": "Hybrid (TF-IDF + Rating)", "Precision@10": 0.7520, "nDCG@10": 0.7608, "HitRate@10": 1.0000, "BrandDiversity@10": 0.9167},
-                {"Model": "Hybrid (SBERT + Rating)", "Precision@10": 0.5413, "nDCG@10": 0.5571, "HitRate@10": 0.9633, "BrandDiversity@10": 0.6203},
                 {"Model": "Random Baseline", "Precision@10": 0.3450, "nDCG@10": 0.3449, "HitRate@10": 0.9400, "BrandDiversity@10": 0.9850},
             ]
         )
@@ -956,8 +895,7 @@ def render_search_page(
         st.markdown(
             """
             - **Hybrid (TF-IDF + Rating)** sedikit mengungguli TF-IDF murni dan menjadi dasar pemilihan skema
-              90:10 untuk deployment. Pendekatan berbasis Sentence-BERT konsisten lebih rendah performanya
-              dibanding TF-IDF pada seluruh skema split yang diuji (P@10 sekitar 0.54–0.56 vs 0.71–0.75).
+              90:10 untuk deployment.
             - **Recall@10 sengaja tidak dijadikan acuan utama** — nilainya kecil (≈0.001) bukan karena model
               buruk, melainkan karena katalog train berjumlah puluhan ribu item sedangkan K hanya 10, sehingga
               Precision@10 dan nDCG@10 lebih representatif untuk skema evaluasi ini.
@@ -977,8 +915,7 @@ def render_search_page(
 init_session_state()
 
 try:
-    df, tfidf_vectorizer, tfidf_matrix, sbert_embeddings = get_resources()
-    sbert_model = get_sbert_model()
+    df, tfidf_vectorizer, tfidf_matrix = get_resources()
     DATA_READY = True
 except FileNotFoundError as error:
     DATA_READY = False
@@ -1037,7 +974,6 @@ with st.sidebar:
     st.markdown(
         "**Tentang metode:**\n\n"
         "- **TF-IDF**: kemiripan berbasis kata kunci notes parfum\n"
-        "- **Sentence-BERT**: kemiripan berbasis makna deskripsi parfum\n"
         "- **Hybrid**: kombinasi kemiripan konten dan rating tertimbang"
     )
     st.markdown("---")
@@ -1052,8 +988,6 @@ else:
         df=df,
         tfidf_vectorizer=tfidf_vectorizer,
         tfidf_matrix=tfidf_matrix,
-        sbert_embeddings=sbert_embeddings,
-        sbert_model=sbert_model,
         gender_filter=gender_filter,
         top_n=top_n,
     )
